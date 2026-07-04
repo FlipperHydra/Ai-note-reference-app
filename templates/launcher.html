@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Notes — Launcher</title>
+    <link rel="stylesheet" href="/static/css/app.css" />
+  </head>
+  <body class="launcher">
+    <main class="launcher-shell">
+      <header class="brand">
+        <svg
+          class="logo"
+          viewBox="0 0 40 40"
+          fill="none"
+          aria-label="AI Notes logo"
+        >
+          <rect x="6" y="4" width="24" height="32" rx="2" stroke="currentColor" stroke-width="2" />
+          <path d="M12 12h12M12 18h12M12 24h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          <circle cx="30" cy="30" r="6" fill="currentColor" opacity="0.15" />
+          <circle cx="30" cy="30" r="6" stroke="currentColor" stroke-width="2" />
+        </svg>
+        <h1>AI Notes</h1>
+        <p class="tag">Local · Offline · Exact recall</p>
+      </header>
+
+      <section class="status-card" aria-live="polite" id="status-card">
+        <div class="status-row">
+          <span class="dot" id="status-dot" data-state="offline"></span>
+          <span class="status-label" id="status-label">Ollama is offline</span>
+        </div>
+
+        <div class="model-row" hidden id="model-row">
+          <label for="model-select">Model</label>
+          <select id="model-select" data-testid="select-model">
+            <option value="">Loading…</option>
+          </select>
+        </div>
+
+        <div class="actions">
+          <button
+            id="btn-start"
+            class="btn primary"
+            data-testid="button-start"
+          >
+            Start Application
+          </button>
+          <button
+            id="btn-stop"
+            class="btn ghost"
+            hidden
+            data-testid="button-stop"
+          >
+            Stop
+          </button>
+          <button
+            id="btn-open"
+            class="btn primary"
+            hidden
+            data-testid="button-open-notes"
+          >
+            Open Notes →
+          </button>
+        </div>
+
+        <p class="hint" id="hint">
+          Nothing runs until you press start. Your notes are stored locally in
+          <code>notes.db</code>.
+        </p>
+      </section>
+
+      <!-- Shutdown tagging screen — hidden until Stop is pressed. -->
+      <section class="tagging-card" hidden id="tagging-card" aria-live="polite">
+        <header class="tagging-head">
+          <span class="dot" data-state="starting"></span>
+          <h2>Tagging new entries…</h2>
+        </header>
+        <p class="tagging-sub" id="tagging-sub">
+          Reading your latest notes and adding tags so recall stays fast.
+          This only runs at shutdown — your writing is never interrupted.
+        </p>
+
+        <div class="progress">
+          <div class="progress-bar" id="tag-progress" style="width:0%"></div>
+        </div>
+        <div class="progress-meta">
+          <span id="tag-count">0 / 0</span>
+          <span id="tag-current" class="tag-current"></span>
+        </div>
+
+        <ul class="tag-stream" id="tag-stream" data-testid="list-tagged"></ul>
+      </section>
+
+      <footer class="foot">
+        <span>v0.1 · no network required after first launch</span>
+      </footer>
+    </main>
+
+    <script src="/static/js/api.js"></script>
+    <script src="/static/js/launcher.js"></script>
+  </body>
+</html>

@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Notes</title>
+    <link rel="stylesheet" href="/static/vendor/quill.snow.css" />
+    <link rel="stylesheet" href="/static/css/app.css" />
+  </head>
+  <body class="app">
+    <!-- ─────────── Left rail: notes history ─────────── -->
+    <aside class="rail rail-left" aria-label="Notes history">
+      <div class="rail-head">
+        <button class="btn primary block" id="btn-new" data-testid="button-new-note">
+          + New note
+        </button>
+        <input
+          type="search"
+          id="filter-input"
+          placeholder="Filter titles…"
+          data-testid="input-filter"
+        />
+      </div>
+      <ol class="note-list" id="note-list" data-testid="list-notes"></ol>
+      <div class="rail-foot">
+        <a href="/" class="link-quiet" data-testid="link-launcher">← Launcher</a>
+        <button id="btn-stop-app" class="btn ghost small" data-testid="button-stop-app">
+          Stop app
+        </button>
+      </div>
+    </aside>
+
+    <!-- ─────────── Center: editor ─────────── -->
+    <section class="editor-shell">
+      <header class="editor-head">
+        <input
+          id="note-title"
+          class="title-input"
+          type="text"
+          placeholder="Untitled note"
+          data-testid="input-title"
+        />
+        <div class="editor-meta">
+          <span id="save-state" class="save-state">Saved</span>
+          <button id="btn-delete" class="btn danger small" data-testid="button-delete">
+            Delete
+          </button>
+        </div>
+      </header>
+
+      <!-- Quill toolbar (offline, no CDN icons — Quill.snow bundles its own) -->
+      <div id="toolbar" class="toolbar">
+        <span class="ql-formats">
+          <select class="ql-header">
+            <option value="1"></option>
+            <option value="2"></option>
+            <option value="3"></option>
+            <option selected></option>
+          </select>
+        </span>
+        <span class="ql-formats">
+          <button class="ql-bold"></button>
+          <button class="ql-italic"></button>
+          <button class="ql-underline"></button>
+          <button class="ql-strike"></button>
+        </span>
+        <span class="ql-formats">
+          <button class="ql-list" value="ordered"></button>
+          <button class="ql-list" value="bullet"></button>
+          <button class="ql-blockquote"></button>
+          <button class="ql-code-block"></button>
+        </span>
+        <span class="ql-formats">
+          <button class="ql-link"></button>
+          <button class="ql-image" data-testid="button-image"></button>
+        </span>
+        <span class="ql-formats">
+          <button class="ql-clean"></button>
+        </span>
+      </div>
+
+      <div id="editor" class="editor" data-testid="editor-body"></div>
+    </section>
+
+    <!-- ─────────── Right rail: chat + recall ─────────── -->
+    <aside class="rail rail-right" aria-label="AI companion">
+      <header class="rail-head chat-head">
+        <div class="mode-switch" role="tablist">
+          <button
+            role="tab"
+            aria-selected="true"
+            class="mode-btn active"
+            data-mode="recall"
+            data-testid="tab-recall"
+          >
+            Recall
+          </button>
+          <button
+            role="tab"
+            aria-selected="false"
+            class="mode-btn"
+            data-mode="chat"
+            data-testid="tab-chat"
+          >
+            Chat
+          </button>
+        </div>
+        <select id="chat-model" class="model-mini" data-testid="select-chat-model">
+          <option value="">no model</option>
+        </select>
+      </header>
+
+      <div id="chat-log" class="chat-log" data-testid="log-chat"></div>
+
+      <form id="chat-form" class="chat-form" autocomplete="off">
+        <textarea
+          id="chat-input"
+          rows="2"
+          placeholder="Search your notes (Recall) or ask about them (Chat)…"
+          data-testid="input-chat"
+        ></textarea>
+        <div class="chat-actions">
+          <label class="scope-line">
+            <input type="checkbox" id="scope-current" checked />
+            Only this note
+          </label>
+          <button type="submit" class="btn primary small" data-testid="button-send">
+            Send
+          </button>
+        </div>
+      </form>
+    </aside>
+
+    <!-- Hidden file input used by Quill's image upload handler -->
+    <input type="file" id="image-picker" accept="image/*" hidden />
+
+    <script src="/static/vendor/quill.min.js"></script>
+    <script src="/static/vendor/marked.min.js"></script>
+    <script src="/static/vendor/dompurify.min.js"></script>
+    <script src="/static/js/api.js"></script>
+    <script src="/static/js/editor.js"></script>
+    <script src="/static/js/chat.js"></script>
+  </body>
+</html>

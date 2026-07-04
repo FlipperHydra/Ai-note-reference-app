@@ -55,10 +55,20 @@ def _port_open() -> bool:
 
 
 async def start() -> dict:
-    """Spawn ollama serve and wait until the port is accepting."""
+    """Spawn ollama serve and wait until the port is accepting.
+
+    In unmanaged mode (docker-compose, remote server) we don't spawn anything
+    but we DO wait for the external Ollama to become reachable — otherwise the
+    launcher races the container-startup order and thinks nothing is running.
+    """
     global _process
     if not OLLAMA_MANAGED:
-        return {"ok": True, "managed": False}
+        ok = await _wait_ready(OLLAMA_START_TIMEOUT_S)
+        if not ok:
+            raise RuntimeError(
+                f"Ollama unreachable at {OLLAMA_HOST}. Is the ollama service running?"
+            )
+        return {"ok": True, "managed": False, "host": OLLAMA_HOST}
     if _process and _process.poll() is None:
         return {"ok": True, "already_running": True}
     if not is_binary_available():
@@ -122,16 +132,29 @@ def status() -> dict:
 # ─────────────────────────────────────────────────────────────────────
 # HTTP client
 # ─────────────────────────────────────────────────────────────────────
-async def list_models() -> list[dict]:
+async def list_models(retries: int = 3, delay: float = 0.5) -> list[dict]:
+    """Fetch installed models from Ollama's /api/tags.
+
+    Retries a few times because there's a brief window right after the port
+    opens where the tags endpoint returns an empty list — particularly in
+    Docker on first boot. Without retries, the launcher shows a spurious
+    "No models installed" state even when the image has weights baked in.
+    """
     if not _port_open():
         return []
     async with httpx.AsyncClient(base_url=OLLAMA_HOST, timeout=5) as x:
-        try:
-            r = await x.get("/api/tags")
-            r.raise_for_status()
-            return r.json().get("models", [])
-        except httpx.HTTPError:
-            return []
+        for attempt in range(retries):
+            try:
+                r = await x.get("/api/tags")
+                r.raise_for_status()
+                models = r.json().get("models", []) or []
+                if models or attempt == retries - 1:
+                    return models
+            except httpx.HTTPError:
+                if attempt == retries - 1:
+                    return []
+            await asyncio.sleep(delay)
+    return []
 
 
 async def chat_once(model: str, messages: list[dict], *, timeout: float = 120.0) -> str:

@@ -195,6 +195,9 @@
   });
 
   // On load, check if Ollama is already running (user may have restarted the tab).
+  // In unmanaged mode (docker-compose), Ollama is a sibling container that's
+  // always meant to be up — so we poll until it's ready instead of waiting for
+  // a user click on "Start Application".
   (async function bootstrap() {
     setState("offline");
     try {
@@ -202,6 +205,18 @@
       if (s && s.ready) {
         await refreshModels();
         setState("ready", "Ollama was already running.");
+        return;
+      }
+      if (s && s.managed === false) {
+        // Docker / external Ollama: wait for it to come up automatically.
+        setState("starting", "Waiting for the Ollama container…");
+        const ok = await pollUntilReady(60000);
+        if (ok) {
+          await refreshModels();
+          setState("ready", "Connected to Ollama.");
+        } else {
+          setState("error", "Ollama container never became ready.");
+        }
       }
     } catch (_) {
       /* backend not up yet — leave in offline state */

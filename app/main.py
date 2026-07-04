@@ -403,11 +403,16 @@ async def api_chat(p: ChatPayload):
     if p.note_id is not None:
         current_note = db.get_note(p.note_id)
         if current_note:
+            # Cap the current-note body so we don't blow the context window
+            # on small local models. Matches the tagger's 6000-char cap.
+            cur_body = (current_note["body_text"] or "").strip()
+            if len(cur_body) > 6000:
+                cur_body = cur_body[:6000] + "\n[…truncated]"
             system_msgs.append({
                 "role": "system",
                 "content": (
                     f'CURRENT NOTE — the user is looking at this note right now.\n'
-                    f'Title: "{current_note["title"]}"\n\n{current_note["body_text"]}'
+                    f'Title: "{current_note["title"]}"\n\n{cur_body}'
                 ),
             })
 

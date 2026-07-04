@@ -63,8 +63,9 @@ async def run(model: str | None = None) -> AsyncIterator[dict]:
     if not model:
         yield {
             "error": (
-                "No local models available for tagging. "
-                "Run `ollama pull llama3.2:3b` and try again."
+                "No local models available for tagging. Install one with "
+                "`ollama pull qwen3:4b` (or rebuild the Docker Ollama image "
+                "if you're running the bundled compose stack)."
             )
         }
         return

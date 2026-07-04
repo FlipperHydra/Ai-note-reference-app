@@ -151,17 +151,19 @@
               if (!raw.startsWith("data:")) continue;
               const payload = raw.slice(5).trim();
               if (payload === "[DONE]") { onDone && onDone(); return; }
+              let j;
               try {
-                const j = JSON.parse(payload);
-                // Backend sends a "context" event first, listing which notes
-                // it attached (current + tag-recall hits).
-                if (j.context) onContext && onContext(j.context);
-                if (j.token) onToken && onToken(j.token);
-                if (j.done)  { onDone && onDone(); return; }
-                if (j.error) throw new Error(j.error);
+                j = JSON.parse(payload);
               } catch (e) {
                 // ignore parse errors on partial frames
+                continue;
               }
+              // Backend sends a "context" event first, listing which notes
+              // it attached (current + tag-recall hits).
+              if (j.context) onContext && onContext(j.context);
+              if (j.token) onToken && onToken(j.token);
+              if (j.done)  { onDone && onDone(); return; }
+              if (j.error) { onError && onError(new Error(j.error)); return; }
             }
           }
           onDone && onDone();

@@ -174,6 +174,13 @@
       return;
     }
 
+    // Abort any in-flight stream so overlapping submits don't tangle
+    // their tokens into the same log.
+    if (state.aborter) {
+      try { state.aborter(); } catch (_) { /* noop */ }
+      state.aborter = null;
+    }
+
     input.value = "";
     appendMsg("user", q);
 

@@ -252,10 +252,15 @@
     }
     markSaved();
     highlightActive();
-    // Expose current note id + title for the chat drawer:
+    // Expose current note id + title for the chat drawer. `note` can be null
+    // here (new/empty scratch buffer), so read the title defensively — the
+    // previous version crashed with a TypeError on "New note" clicks.
+    const noteTitle = note ? (note.title || "") : "";
     window.__currentNote = state.currentId;
-    window.__currentNoteTitle = note.title || "";
-    window.dispatchEvent(new CustomEvent("note-loaded", { detail: { id: state.currentId, title: note.title || "" } }));
+    window.__currentNoteTitle = noteTitle;
+    window.dispatchEvent(new CustomEvent("note-loaded", {
+      detail: { id: state.currentId, title: noteTitle },
+    }));
   }
 
   // ─────────── Utilities ───────────

@@ -37,12 +37,20 @@ OLLAMA_START_TIMEOUT_S = int(os.environ.get("AI_NOTES_OLLAMA_TIMEOUT", "30"))
 # Which model to use for background tagging when the user hasn't picked
 # one explicitly. We look for these in order and use the first installed.
 TAGGER_MODEL_PREFERENCES = [
+    # Docker image bakes in qwen3:4b and gemma3:270m — prefer those first so
+    # tagging is deterministic in the default deployment. Everything else is
+    # a fallback for users running Ollama outside Docker with other pulls.
+    "qwen3:4b",
     "llama3.2:3b",
     "llama3.2",
     "phi3:mini",
     "phi3",
     "mistral:7b",
     "mistral",
+    # gemma3:270m is tiny (~292MB) and only marginally useful for tagging —
+    # keep it as a last-resort so the app still works if it's the only model
+    # available.
+    "gemma3:270m",
 ]
 
 # Upload limits

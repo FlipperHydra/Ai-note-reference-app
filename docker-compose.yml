@@ -37,7 +37,7 @@ services:
       args:
         # Space-separated list of Ollama model tags to bake into the image.
         # Add or remove models here, then `docker compose build ollama`.
-        OLLAMA_MODELS: "qwen3:4b gemma3:270m"
+        MODELS_TO_PULL: "qwen3:4b gemma3:270m"
     image: ai-notes-ollama:latest
     container_name: ai-notes-ollama
     # Not published to the host — reachable only from the app container.

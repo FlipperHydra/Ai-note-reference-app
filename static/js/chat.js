@@ -1,48 +1,33 @@
-// chat.js — the right-rail companion.
-//   Recall mode → hits /api/recall (SQLite FTS, no LLM, exact tokens)
-//   Chat mode   → streams from Ollama with a system prompt that forbids
-//                 modifying source notes.
+// chat.js — the right-rail AI chat.
+//
+// Design after the mode-tab redesign:
+//   * ONE surface. No "Recall" vs "Chat" toggle.
+//   * The chat is always about the current note (whichever one is open in
+//     the editor). Its title is shown in the header; on note switch, we
+//     clear the conversation so contexts don't bleed.
+//   * If the user asks about a different note ("what did I write about
+//     dragons?"), the backend does tag-based recall on the message and
+//     injects the top hits as extra context. No user action needed.
+//   * The frontend emits an SSE-tagged "context" event at the start of
+//     each turn so we can render a small chip row showing which notes
+//     the AI is actually looking at.
 
 (function () {
   "use strict";
 
-  const log        = document.getElementById("chat-log");
-  const form       = document.getElementById("chat-form");
-  const input      = document.getElementById("chat-input");
-  const modelSel   = document.getElementById("chat-model");
-  const scopeCb    = document.getElementById("scope-current");
-  const tabs       = document.querySelectorAll(".mode-btn");
-
-  const SYSTEM_PROMPT =
-    "You are a read-only assistant for the user's local notes. " +
-    "You may quote, summarize, and re-explain the note contents provided, " +
-    "but you must NEVER invent additions to a note or claim to have edited " +
-    "one. If asked to modify a note, respond with the proposed change as " +
-    "plain text and remind the user to press 'Save reply as new note' to " +
-    "keep the original untouched.";
+  const log         = document.getElementById("chat-log");
+  const form        = document.getElementById("chat-form");
+  const input       = document.getElementById("chat-input");
+  const modelSel    = document.getElementById("chat-model");
+  const scopeLabel  = document.getElementById("chat-scope-label");
+  const btnClear    = document.getElementById("btn-clear-chat");
 
   const state = {
-    mode: "recall",       // "recall" | "chat"
-    history: [],          // in-memory only; chat isn't persisted for now
+    history: [],   // {role, content}[]  — in-memory only
     aborter: null,
   };
 
-  // ─────────── Mode switching ───────────
-  tabs.forEach((btn) => {
-    btn.addEventListener("click", () => {
-      tabs.forEach((b) => {
-        b.classList.toggle("active", b === btn);
-        b.setAttribute("aria-selected", b === btn ? "true" : "false");
-      });
-      state.mode = btn.dataset.mode;
-      input.placeholder =
-        state.mode === "recall"
-          ? "Search your notes exactly (FTS, no AI matching)…"
-          : "Ask about the current note. AI won't modify it.";
-    });
-  });
-
-  // ─────────── Model list ───────────
+  // ─────────── Model dropdown ───────────
   async function loadModels() {
     try {
       const { models } = await API.listModels();
@@ -63,7 +48,7 @@
           modelSel.value = last;
         }
       } catch (_) {}
-    } catch (err) {
+    } catch (_) {
       modelSel.innerHTML = '<option value="">Ollama offline</option>';
     }
   }
@@ -71,17 +56,29 @@
     try { sessionStorage.setItem("ai-notes:model", modelSel.value); } catch (_) {}
   });
 
-  // ─────────── Rendering helpers ───────────
-  function appendMsg(role, htmlOrText, isHtml = false) {
+  // ─────────── Scope label (shows the current note's title) ───────────
+  function refreshScopeLabel() {
+    const title = window.__currentNoteTitle;
+    if (window.__currentNote && title) {
+      scopeLabel.textContent = `About: ${title}`;
+      scopeLabel.title = title;
+    } else if (window.__currentNote) {
+      scopeLabel.textContent = "About: Untitled";
+    } else {
+      scopeLabel.textContent = "No note open";
+    }
+  }
+
+  // ─────────── Message rendering ───────────
+  function appendMsg(role, text) {
     const div = document.createElement("div");
     div.className = "msg " + role;
     const who = document.createElement("span");
     who.className = "who";
-    who.textContent = role === "user" ? "You" : role === "assistant" ? "AI" : "System";
+    who.textContent = role === "user" ? "You" : "AI";
     const body = document.createElement("div");
     body.className = "body";
-    if (isHtml) body.innerHTML = htmlOrText;
-    else body.textContent = htmlOrText;
+    body.textContent = text;
     div.appendChild(who);
     div.appendChild(body);
     log.appendChild(div);
@@ -89,39 +86,37 @@
     return body;
   }
 
-  function renderRecallHits(hits) {
-    if (!hits.length) {
-      appendMsg("assistant", "No exact matches. Try different keywords.");
-      return;
-    }
-    const wrap = document.createElement("div");
-    wrap.className = "msg assistant";
-    const who = document.createElement("span");
-    who.className = "who";
-    who.textContent = `Recall · ${hits.length} match${hits.length === 1 ? "" : "es"}`;
-    wrap.appendChild(who);
-    for (const h of hits) {
-      const card = document.createElement("div");
-      card.className = "recall-hit";
-      card.dataset.testid = `hit-note-${h.id}`;
-      card.innerHTML =
-        `<div class="hit-title">${escapeHtml(h.title || "Untitled")}</div>` +
-        `<div class="hit-snippet">${h.snippet /* server-sanitized */}</div>`;
-      card.addEventListener("click", () => {
-        // Fire a synthetic click on the corresponding history-rail entry.
-        const target = document.querySelector(
-          `#note-list li[data-id="${h.id}"]`
-        );
+  function renderContextChips(ctx) {
+    // ctx: { current: {id, title}|null, recalled: [{id, title}, ...] }
+    const chips = [];
+    if (ctx.current) chips.push({ id: ctx.current.id, title: ctx.current.title, kind: "current" });
+    for (const r of ctx.recalled || []) chips.push({ ...r, kind: "recalled" });
+    if (!chips.length) return;
+
+    const row = document.createElement("div");
+    row.className = "context-row";
+    row.dataset.testid = "row-context";
+    for (const c of chips) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "context-chip " + c.kind;
+      chip.dataset.testid = `chip-note-${c.id}`;
+      chip.textContent = (c.kind === "current" ? "▸ " : "↳ ") + (c.title || "Untitled");
+      chip.title =
+        c.kind === "current"
+          ? "The note you're editing (attached automatically)"
+          : "Pulled from your notes by tag recall — click to open";
+      chip.addEventListener("click", () => {
+        const target = document.querySelector(`#note-list li[data-id="${c.id}"]`);
         if (target) target.click();
       });
-      wrap.appendChild(card);
+      row.appendChild(chip);
     }
-    log.appendChild(wrap);
+    log.appendChild(row);
     log.scrollTop = log.scrollHeight;
   }
 
   function renderAssistantStream() {
-    // create the shell, return two callbacks: onToken + finalize
     const shell = document.createElement("div");
     shell.className = "msg assistant";
     const who = document.createElement("span");
@@ -144,8 +139,6 @@
           started = true;
         }
         raw += tok;
-        // Re-render markdown safely on each token. For very long replies this
-        // is fine — DOMPurify + marked are fast enough for note-sized text.
         body.innerHTML = DOMPurify.sanitize(marked.parse(raw));
         log.scrollTop = log.scrollHeight;
       },
@@ -154,8 +147,6 @@
           body.textContent = "(no response)";
           return;
         }
-        // Add a "Save reply as new note" affordance — keeps the guardrail
-        // explicit: AI never writes to notes without the user's click.
         const save = document.createElement("button");
         save.className = "btn ghost small save-as-note";
         save.type = "button";
@@ -167,61 +158,58 @@
         });
         shell.appendChild(save);
       },
+      getRaw() { return raw; },
     };
   }
 
-  // ─────────── Submit handler ───────────
+  // ─────────── Submit ───────────
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const q = input.value.trim();
     if (!q) return;
-    input.value = "";
-    appendMsg("user", q);
 
-    const noteId = scopeCb.checked ? (window.__currentNote ?? null) : null;
-
-    if (state.mode === "recall") {
-      try {
-        const hits = await API.recall(q, noteId);
-        renderRecallHits(hits || []);
-      } catch (err) {
-        appendMsg("assistant", "Recall failed: " + err.message);
-      }
-      return;
-    }
-
-    // Chat mode
     const model = modelSel.value;
     if (!model) {
       appendMsg("assistant", "Pick a model first (or start Ollama).");
       return;
     }
 
-    // Build message list. The backend also injects the note context, but
-    // we send our conversation history so multi-turn works.
+    input.value = "";
+    appendMsg("user", q);
+
+    // The current note (if any) is ALWAYS attached — the backend handles
+    // that from note_id. No scope toggle to think about.
+    const noteId = window.__currentNote ?? null;
+
     const messages = [
-      { role: "system", content: SYSTEM_PROMPT },
       ...state.history,
       { role: "user", content: q },
     ];
     state.history.push({ role: "user", content: q });
 
-    const renderer = renderAssistantStream();
+    let renderer = null;
     let acc = "";
+
     state.aborter = API.streamChat({
       model,
       messages,
       noteId,
+      onContext(ctx) {
+        renderContextChips(ctx);
+      },
       onToken(t) {
+        if (!renderer) renderer = renderAssistantStream();
         acc += t;
         renderer.onToken(t);
       },
       onDone() {
+        if (!renderer) renderer = renderAssistantStream();
         renderer.finalize();
         state.history.push({ role: "assistant", content: acc });
         state.aborter = null;
       },
       onError(err) {
+        if (!renderer) renderer = renderAssistantStream();
         renderer.onToken("\n\n**[error]** " + err.message);
         renderer.finalize();
         state.aborter = null;
@@ -237,18 +225,24 @@
     }
   });
 
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
-    );
-  }
+  btnClear.addEventListener("click", () => {
+    if (state.aborter) { try { state.aborter(); } catch (_) {} state.aborter = null; }
+    state.history = [];
+    log.innerHTML = "";
+  });
 
   // ─────────── Init ───────────
   loadModels();
+  refreshScopeLabel();
 
-  // If the user switches notes, clear conversation history so the AI doesn't
-  // conflate contexts. Recall hits are already scoped per-query.
+  // Editor tells us which note is loaded — clear history on switch so the
+  // AI isn't answering with stale note context.
   window.addEventListener("note-loaded", () => {
     state.history = [];
+    log.innerHTML = "";
+    refreshScopeLabel();
   });
+
+  // Live title updates while the user types in the title field.
+  window.addEventListener("note-title-changed", refreshScopeLabel);
 })();

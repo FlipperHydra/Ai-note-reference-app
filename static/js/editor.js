@@ -115,7 +115,14 @@
   quill.on("text-change", (_delta, _old, source) => {
     if (source === "user") markDirty();
   });
-  titleInput.addEventListener("input", markDirty);
+  titleInput.addEventListener("input", () => {
+    markDirty();
+    // Keep the chat header's "About: …" label in sync while the user types.
+    window.__currentNoteTitle = titleInput.value;
+    window.dispatchEvent(new CustomEvent("note-title-changed", {
+      detail: { title: titleInput.value },
+    }));
+  });
 
   // Save immediately on blur/tab-away so we don't lose the last keystrokes.
   window.addEventListener("beforeunload", () => {
@@ -245,9 +252,10 @@
     }
     markSaved();
     highlightActive();
-    // Expose current note id for the chat drawer:
+    // Expose current note id + title for the chat drawer:
     window.__currentNote = state.currentId;
-    window.dispatchEvent(new CustomEvent("note-loaded", { detail: { id: state.currentId } }));
+    window.__currentNoteTitle = note.title || "";
+    window.dispatchEvent(new CustomEvent("note-loaded", { detail: { id: state.currentId, title: note.title || "" } }));
   }
 
   // ─────────── Utilities ───────────

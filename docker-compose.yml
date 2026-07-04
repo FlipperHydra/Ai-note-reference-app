@@ -1,0 +1,51 @@
+# AI Notes — self-hosted stack.
+#
+# Two services: the FastAPI app and Ollama. The app talks to Ollama over the
+# internal Docker network; neither needs to be published beyond localhost.
+#
+# First-run:
+#   docker compose up -d
+#   docker compose exec ollama ollama pull llama3.2:3b
+# Open http://127.0.0.1:8765
+
+services:
+  app:
+    build: .
+    image: ai-notes:latest
+    container_name: ai-notes-app
+    depends_on:
+      - ollama
+    environment:
+      AI_NOTES_HOST: 0.0.0.0
+      AI_NOTES_PORT: 8765
+      AI_NOTES_DB: /data/notes.db
+      AI_NOTES_UPLOADS: /data/uploads
+      AI_NOTES_OLLAMA_MANAGED: "0"
+      AI_NOTES_OLLAMA_HOST: http://ollama:11434
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - ai-notes-data:/data
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ai-notes-ollama
+    # Not published to the host — reachable only from the app container.
+    expose:
+      - "11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+    # Uncomment for NVIDIA GPU passthrough (Linux + NVIDIA Container Toolkit):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  ai-notes-data:
+  ollama-models:

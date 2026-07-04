@@ -99,7 +99,15 @@ async def _wait_ready(timeout_s: int) -> bool:
 
 
 def stop() -> dict:
-    """Kill the child process group. Idempotent."""
+    """Kill the child process group. Idempotent.
+
+    Killing the ollama process makes the OS reclaim all its RAM/VRAM
+    immediately, so this is sufficient in managed mode. In unmanaged mode
+    (docker-compose, remote server) we don't own the process — callers
+    should invoke unload_models_sync() first to evict resident model
+    weights, otherwise Ollama holds them for its keep_alive window (5m
+    default) after we go away.
+    """
     global _process
     if not OLLAMA_MANAGED:
         return {"ok": True, "managed": False}
@@ -118,6 +126,88 @@ def stop() -> dict:
     finally:
         _process = None
     return {"ok": True}
+
+
+# ────────────────────────────────────────────────────────────────────
+# Memory release — explicit model eviction
+# ────────────────────────────────────────────────────────────────────
+async def loaded_models() -> list[str]:
+    """Return names of models currently resident in Ollama's memory.
+
+    Uses /api/ps (Ollama's "which models are loaded right now" endpoint).
+    Returns [] if Ollama is unreachable.
+    """
+    if not _port_open():
+        return []
+    try:
+        async with httpx.AsyncClient(base_url=OLLAMA_HOST, timeout=3) as x:
+            r = await x.get("/api/ps")
+            r.raise_for_status()
+            return [m.get("name") for m in r.json().get("models", []) if m.get("name")]
+    except httpx.HTTPError:
+        return []
+
+
+async def unload_model(model: str) -> bool:
+    """Force Ollama to evict `model` from RAM/VRAM immediately.
+
+    Ollama's convention: any /api/generate or /api/chat request with
+    keep_alive=0 unloads the model as soon as the request completes.
+    We send an empty prompt so no actual generation happens — it's a
+    pure eviction signal.
+    """
+    if not _port_open():
+        return False
+    try:
+        async with httpx.AsyncClient(base_url=OLLAMA_HOST, timeout=10) as x:
+            r = await x.post(
+                "/api/generate",
+                json={"model": model, "prompt": "", "keep_alive": 0, "stream": False},
+            )
+            return r.status_code == 200
+    except httpx.HTTPError:
+        return False
+
+
+async def unload_all_models() -> dict:
+    """Evict every currently loaded model. Idempotent, safe to call anytime."""
+    names = await loaded_models()
+    if not names:
+        return {"ok": True, "unloaded": []}
+    results = []
+    for name in names:
+        ok = await unload_model(name)
+        results.append({"model": name, "unloaded": ok})
+    return {"ok": all(r["unloaded"] for r in results), "unloaded": results}
+
+
+def unload_all_models_sync(timeout_s: float = 8.0) -> dict:
+    """Blocking variant — safe to call from signal handlers and atexit hooks
+    where no event loop is running (or the running loop is shutting down).
+
+    We use a fresh synchronous httpx client so we don't depend on asyncio.
+    """
+    if not _port_open():
+        return {"ok": True, "unloaded": [], "reason": "ollama_unreachable"}
+    try:
+        with httpx.Client(base_url=OLLAMA_HOST, timeout=timeout_s) as x:
+            r = x.get("/api/ps")
+            if r.status_code != 200:
+                return {"ok": False, "unloaded": [], "reason": "ps_failed"}
+            names = [m.get("name") for m in r.json().get("models", []) if m.get("name")]
+            results = []
+            for name in names:
+                try:
+                    rr = x.post(
+                        "/api/generate",
+                        json={"model": name, "prompt": "", "keep_alive": 0, "stream": False},
+                    )
+                    results.append({"model": name, "unloaded": rr.status_code == 200})
+                except httpx.HTTPError:
+                    results.append({"model": name, "unloaded": False})
+            return {"ok": all(r["unloaded"] for r in results), "unloaded": results}
+    except httpx.HTTPError as e:
+        return {"ok": False, "unloaded": [], "reason": f"http_error: {e}"}
 
 
 def status() -> dict:

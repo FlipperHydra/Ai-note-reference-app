@@ -30,6 +30,11 @@ services:
     volumes:
       - ai-notes-data:/data
     restart: unless-stopped
+    # Give FastAPI time to trap SIGTERM, evict Ollama models via
+    # /api/generate keep_alive=0, then exit cleanly. Default 10s is
+    # tight when a large model is resident.
+    stop_grace_period: 20s
+    stop_signal: SIGTERM
 
   ollama:
     build:
@@ -44,6 +49,13 @@ services:
     expose:
       - "11434"
     restart: unless-stopped
+    # On `docker compose down` the app service releases model memory
+    # first (see stop_grace_period above); this grace period lets
+    # Ollama flush any in-flight requests before the OS reclaims
+    # everything. On container stop, the OS reclaims all RAM/VRAM
+    # regardless — this only affects clean shutdown UX.
+    stop_grace_period: 15s
+    stop_signal: SIGTERM
     # Uncomment for NVIDIA GPU passthrough (Linux + NVIDIA Container Toolkit):
     # deploy:
     #   resources:

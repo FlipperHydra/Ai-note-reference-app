@@ -1,12 +1,15 @@
 # AI Notes — self-hosted stack.
 #
-# Two services: the FastAPI app and Ollama. The app talks to Ollama over the
-# internal Docker network; neither needs to be published beyond localhost.
+# Two services: the FastAPI app and Ollama with models baked in. The app talks
+# to Ollama over the internal Docker network; neither needs to be published
+# beyond localhost.
 #
 # First-run:
+#   docker compose build          # ~3 GB image build, pulls qwen3:4b + gemma3:270m
 #   docker compose up -d
-#   docker compose exec ollama ollama pull llama3.2:3b
 # Open http://127.0.0.1:8765
+#
+# To change which models are baked in, edit the OLLAMA_MODELS build arg below.
 
 services:
   app:
@@ -29,13 +32,17 @@ services:
     restart: unless-stopped
 
   ollama:
-    image: ollama/ollama:latest
+    build:
+      context: ./docker/ollama
+      args:
+        # Space-separated list of Ollama model tags to bake into the image.
+        # Add or remove models here, then `docker compose build ollama`.
+        OLLAMA_MODELS: "qwen3:4b gemma3:270m"
+    image: ai-notes-ollama:latest
     container_name: ai-notes-ollama
     # Not published to the host — reachable only from the app container.
     expose:
       - "11434"
-    volumes:
-      - ollama-models:/root/.ollama
     restart: unless-stopped
     # Uncomment for NVIDIA GPU passthrough (Linux + NVIDIA Container Toolkit):
     # deploy:
@@ -48,4 +55,3 @@ services:
 
 volumes:
   ai-notes-data:
-  ollama-models:

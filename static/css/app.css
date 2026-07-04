@@ -549,36 +549,86 @@ body.app {
 }
 
 /* =========================================================
-   CHAT / RECALL DRAWER
+   CHAT DRAWER (unified — always tied to current note)
    ========================================================= */
 .chat-head {
-  gap: 12px;
+  gap: 10px;
 }
-.mode-switch {
-  display: inline-flex;
-  background: var(--surface-2);
-  border-radius: var(--radius);
-  padding: 3px;
-  border: 1px solid var(--border);
+.chat-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
 }
-.mode-btn {
-  background: transparent;
-  border: 0;
-  padding: 5px 12px;
-  border-radius: 4px;
+.chat-title-main {
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+.chat-title-sub {
   color: var(--text-dim);
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.mode-btn.active {
-  background: var(--accent);
-  color: var(--accent-ink);
+.chat-title-sub.empty {
+  color: var(--text-mute);
+  font-style: italic;
+}
+.chat-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .model-mini {
   padding: 5px 24px 5px 8px !important;
   font-size: 12px;
   background-size: 4px 4px, 4px 4px;
+}
+
+/* context chips row — shows current note + recalled notes for a chat turn */
+.context-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: var(--sans);
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+.context-chip:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.context-chip.current {
+  color: var(--accent);
+  border-color: rgba(124, 196, 163, 0.35);
+  background: rgba(124, 196, 163, 0.08);
+}
+.context-chip.recalled {
+  color: var(--text-dim);
+}
+.context-chip .chip-mark {
+  font-family: var(--mono);
+  font-size: 10px;
+  opacity: 0.7;
 }
 
 .chat-log {
@@ -673,13 +723,12 @@ body.app {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
 }
-.scope-line {
-  color: var(--text-dim);
-  font-size: 12px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.chat-hint {
+  color: var(--text-mute);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 /* ─────────── Empty / loading states ─────────── */

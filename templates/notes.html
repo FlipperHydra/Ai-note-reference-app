@@ -82,28 +82,14 @@
       <div id="editor" class="editor" data-testid="editor-body"></div>
     </section>
 
-    <!-- ─────────── Right rail: chat + recall ─────────── -->
-    <aside class="rail rail-right" aria-label="AI companion">
+    <!-- ─────────── Right rail: chat ─────────── -->
+    <aside class="rail rail-right" aria-label="AI chat">
       <header class="rail-head chat-head">
-        <div class="mode-switch" role="tablist">
-          <button
-            role="tab"
-            aria-selected="true"
-            class="mode-btn active"
-            data-mode="recall"
-            data-testid="tab-recall"
-          >
-            Recall
-          </button>
-          <button
-            role="tab"
-            aria-selected="false"
-            class="mode-btn"
-            data-mode="chat"
-            data-testid="tab-chat"
-          >
-            Chat
-          </button>
+        <div class="chat-title">
+          <span class="chat-title-main">Chat</span>
+          <span class="chat-title-sub" id="chat-scope-label" data-testid="text-scope">
+            No note open
+          </span>
         </div>
         <select id="chat-model" class="model-mini" data-testid="select-chat-model">
           <option value="">no model</option>
@@ -116,14 +102,18 @@
         <textarea
           id="chat-input"
           rows="2"
-          placeholder="Search your notes (Recall) or ask about them (Chat)…"
+          placeholder="Ask about this note. AI can also recall others by tag."
           data-testid="input-chat"
         ></textarea>
         <div class="chat-actions">
-          <label class="scope-line">
-            <input type="checkbox" id="scope-current" checked />
-            Only this note
-          </label>
+          <button
+            type="button"
+            id="btn-clear-chat"
+            class="btn ghost small"
+            data-testid="button-clear-chat"
+          >
+            Clear
+          </button>
           <button type="submit" class="btn primary small" data-testid="button-send">
             Send
           </button>

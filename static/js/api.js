@@ -123,7 +123,7 @@
      * @param {(err:Error) => void} p.onError
      * @returns {() => void} abort function
      */
-    streamChat({ model, messages, noteId, onToken, onDone, onError }) {
+    streamChat({ model, messages, noteId, onContext, onToken, onDone, onError }) {
       const ctrl = new AbortController();
       (async () => {
         try {
@@ -153,6 +153,9 @@
               if (payload === "[DONE]") { onDone && onDone(); return; }
               try {
                 const j = JSON.parse(payload);
+                // Backend sends a "context" event first, listing which notes
+                // it attached (current + tag-recall hits).
+                if (j.context) onContext && onContext(j.context);
                 if (j.token) onToken && onToken(j.token);
                 if (j.done)  { onDone && onDone(); return; }
                 if (j.error) throw new Error(j.error);

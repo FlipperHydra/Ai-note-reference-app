@@ -17,9 +17,12 @@ Wire diagram
 
 from __future__ import annotations
 
+import atexit
 import json
 import re
 import secrets
+import signal
+import sys
 from pathlib import Path
 from typing import AsyncIterator, Optional
 
@@ -54,17 +57,77 @@ app = FastAPI(title="AI Notes", version="0.1.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
+# Guard so cleanup only runs once even if multiple hooks fire (atexit +
+# signal + FastAPI shutdown all racing to release memory).
+_cleanup_done = False
+
+
+def _release_ollama_memory(reason: str = "shutdown") -> None:
+    """Guarantee Ollama releases model memory before the app exits.
+
+    Runs in this order, all idempotent:
+      1. POST /api/generate with keep_alive=0 for every loaded model —
+         evicts weights immediately instead of waiting 5m keep_alive.
+         Critical in unmanaged mode (docker-compose) where we don't own
+         the Ollama process.
+      2. In managed mode, kill the ollama serve child process group.
+         The OS then reclaims all its RAM/VRAM.
+
+    Safe to call from signal handlers, atexit, and FastAPI shutdown.
+    """
+    global _cleanup_done
+    if _cleanup_done:
+        return
+    _cleanup_done = True
+    try:
+        result = ollama.unload_all_models_sync(timeout_s=6.0)
+        print(f"[ai-notes] ollama unload ({reason}): {result}", file=sys.stderr, flush=True)
+    except Exception as e:
+        print(f"[ai-notes] ollama unload failed ({reason}): {e}", file=sys.stderr, flush=True)
+    try:
+        ollama.stop()
+    except Exception as e:
+        print(f"[ai-notes] ollama.stop failed ({reason}): {e}", file=sys.stderr, flush=True)
+
+
+def _install_signal_handlers() -> None:
+    """Trap the signals uvicorn/docker use for shutdown so we release memory
+    even when FastAPI's on_event('shutdown') doesn't fire (e.g. abrupt SIGKILL
+    isn't catchable, but SIGTERM/SIGINT/SIGHUP are).
+    """
+    def _handler(signum, _frame):
+        _release_ollama_memory(reason=f"signal_{signum}")
+        # Re-raise the default behavior so uvicorn still exits.
+        signal.signal(signum, signal.SIG_DFL)
+        try:
+            import os
+            os.kill(os.getpid(), signum)
+        except Exception:
+            sys.exit(0)
+
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        try:
+            signal.signal(sig, _handler)
+        except (ValueError, OSError):
+            # SIGHUP not available on Windows; ignore.
+            pass
+
+
 @app.on_event("startup")
 def _startup() -> None:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     db.init_db()
+    _install_signal_handlers()
+    # Last-resort net: if the process exits without ever hitting a signal
+    # or the FastAPI shutdown hook, atexit still fires.
+    atexit.register(_release_ollama_memory, "atexit")
 
 
 @app.on_event("shutdown")
 def _shutdown() -> None:
-    # Belt-and-braces: if the process is killed while Ollama is still
-    # under our control, don't leak the child.
-    ollama.stop()
+    # Primary path on graceful uvicorn shutdown. Evicts loaded models
+    # from Ollama memory, then — in managed mode — kills the child.
+    _release_ollama_memory(reason="fastapi_shutdown")
 
 
 @app.get("/")
@@ -90,7 +153,26 @@ async def api_ollama_start():
 
 @app.post("/api/ollama/stop")
 async def api_ollama_stop():
-    return ollama.stop()
+    # Unload models FIRST so we release RAM/VRAM even in unmanaged mode
+    # where ollama.stop() is a no-op.
+    unload = await ollama.unload_all_models()
+    kill   = ollama.stop()
+    return {"unload": unload, "stop": kill}
+
+
+@app.post("/api/ollama/unload")
+async def api_ollama_unload():
+    """Force Ollama to evict every currently-loaded model from memory.
+    Works in both managed and unmanaged mode. Leaves the ollama server
+    itself running — use /api/ollama/stop to also tear that down.
+    """
+    return await ollama.unload_all_models()
+
+
+@app.get("/api/ollama/loaded")
+async def api_ollama_loaded():
+    """Report which models are currently resident in Ollama's memory."""
+    return {"loaded": await ollama.loaded_models()}
 
 
 @app.get("/api/ollama/status")
@@ -268,25 +350,108 @@ def _sse(event: dict) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
+async def _recall_hits_for(query: str, exclude_note_id: Optional[int]) -> list[dict]:
+    """Same two-stage recall used by /api/recall, but returns raw hits with
+    body_text so we can inject them as chat context. Falls through to FTS if
+    the LLM tag translation misses or Ollama is unreachable.
+    """
+    tag_candidates: list[str] = []
+    if ollama.status()["ready"]:
+        model = await ollama.pick_tagger_model(TAGGER_MODEL_PREFERENCES)
+        if model:
+            try:
+                reply = await ollama.chat_once(model, build_recall_messages(query))
+                m = re.search(r"\{.*\}", reply, re.DOTALL)
+                if m:
+                    obj = json.loads(m.group(0))
+                    tag_candidates = normalize_tags(str(x) for x in obj.get("tags", []))
+            except Exception:  # noqa: BLE001
+                tag_candidates = []
+
+    if tag_candidates:
+        hits = db.notes_by_tags(tag_candidates)
+        hits = [h for h in hits if h["id"] != exclude_note_id]
+        if hits:
+            # Enrich with body_text for context injection
+            return [
+                {**h, "body_text": (db.get_note(h["id"]) or {}).get("body_text", "")}
+                for h in hits[:3]
+            ]
+
+    fts = db.fts_search(query)
+    fts = [h for h in fts if h["id"] != exclude_note_id]
+    return [
+        {**h, "body_text": (db.get_note(h["id"]) or {}).get("body_text", "")}
+        for h in fts[:3]
+    ]
+
+
 @app.post("/api/chat")
 async def api_chat(p: ChatPayload):
     if not ollama.status()["ready"]:
         raise HTTPException(503, "Ollama is not running")
 
-    # Server-side injection: guarantee the guardrail is present and that
-    # note context (when scoped) is attached even if the frontend didn't
-    # send it. The frontend also sends CHAT_SYSTEM — we dedupe by
-    # dropping any client-supplied system messages.
+    # Server-side injection: the guardrail is always first, then the current
+    # note (if one is open), then any recall hits that look relevant to the
+    # user's latest message. The frontend never has to think about scope —
+    # the current note is ALWAYS attached, and the model can reference other
+    # notes by asking questions about them (recall is auto-invoked below).
     user_msgs = [m for m in p.messages if m.get("role") != "system"]
-    system_msgs = [{"role": "system", "content": CHAT_SYSTEM}]
+    system_msgs: list[dict] = [{"role": "system", "content": CHAT_SYSTEM}]
 
+    current_note = None
     if p.note_id is not None:
-        note = db.get_note(p.note_id)
-        if note:
-            ctx = f'NOTE CONTEXT — title: "{note["title"]}"\n\n{note["body_text"]}'
-            system_msgs.append({"role": "system", "content": ctx})
+        current_note = db.get_note(p.note_id)
+        if current_note:
+            system_msgs.append({
+                "role": "system",
+                "content": (
+                    f'CURRENT NOTE — the user is looking at this note right now.\n'
+                    f'Title: "{current_note["title"]}"\n\n{current_note["body_text"]}'
+                ),
+            })
+
+    # Auto-recall: use the latest user turn as a recall query. Anything we
+    # find that ISN'T the current note gets attached as extra context, so
+    # the model can answer cross-note questions without a separate mode.
+    last_user = next(
+        (m["content"] for m in reversed(user_msgs) if m.get("role") == "user"),
+        "",
+    )
+    other_hits: list[dict] = []
+    if last_user.strip():
+        try:
+            other_hits = await _recall_hits_for(last_user, exclude_note_id=p.note_id)
+        except Exception:  # noqa: BLE001
+            other_hits = []
+
+    if other_hits:
+        blocks = []
+        for h in other_hits:
+            body = (h.get("body_text") or "").strip()
+            if len(body) > 1500:
+                body = body[:1500] + "\n[…truncated]"
+            blocks.append(f'--- Note: "{h["title"]}" (id={h["id"]})\n{body}')
+        system_msgs.append({
+            "role": "system",
+            "content": (
+                "OTHER RELEVANT NOTES — pulled by tag-based recall. Cite by\n"
+                "title when you reference them. Do NOT invent details not\n"
+                "present below.\n\n" + "\n\n".join(blocks)
+            ),
+        })
 
     async def stream() -> AsyncIterator[bytes]:
+        # Signal to the client which notes we attached (for the UI chip row).
+        yield _sse({
+            "context": {
+                "current": (
+                    {"id": current_note["id"], "title": current_note["title"]}
+                    if current_note else None
+                ),
+                "recalled": [{"id": h["id"], "title": h["title"]} for h in other_hits],
+            }
+        }).encode()
         try:
             async for tok in ollama.chat_stream(p.model, system_msgs + user_msgs):
                 yield _sse({"token": tok}).encode()

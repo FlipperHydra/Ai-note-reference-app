@@ -53,7 +53,9 @@ async def run(model: str | None = None) -> AsyncIterator[dict]:
     yield {"total": len(pending)}
 
     if not pending:
-        # Nothing to tag — still stop Ollama so the UX matches.
+        # Nothing to tag — still release model memory + stop Ollama so
+        # the UX matches (idle CPU/RAM returns to zero).
+        await ollama.unload_all_models()
         ollama.stop()
         yield {"done": True, "tagged": 0}
         return
@@ -96,6 +98,8 @@ async def run(model: str | None = None) -> AsyncIterator[dict]:
                 "error": str(e),
             }
 
-    # Tagging finished — kill Ollama so idle CPU returns to zero.
+    # Tagging finished — release model memory first (works in both managed
+    # and unmanaged mode) then kill the process in managed mode.
+    await ollama.unload_all_models()
     ollama.stop()
     yield {"done": True, "tagged": tagged}
